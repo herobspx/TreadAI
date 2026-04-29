@@ -45,11 +45,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not user:
         return
 
-    # إشعار الأدمن
+    # إشعار الأدمن مع زر رد
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("↩️ رد", callback_data=f"reply_{user.id}")
+    ]])
     await context.bot.send_message(
         chat_id=ADMIN_ID,
         text=f"📩 رسالة جديدة\n👤 {user.full_name}\n🆔 `{user.id}`\n📱 @{user.username or '—'}\n\nالرسالة:\n{update.message.text or '—'}",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=kb
     )
 
     # الرد التلقائي
@@ -57,6 +61,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         WELCOME_MSG,
         reply_markup=welcome_keyboard()
     )
+
+async def handle_reply_btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """لما الأدمن يضغط زر رد"""
+    query = update.callback_query
+    await query.answer()
+    target_id = query.data.replace("reply_", "")
+    context.user_data["replying_to"] = target_id
+    await query.message.reply_text(f"✏️ اكتب ردك للمستخدم `{target_id}`:", parse_mode="Markdown")
+
+async def handle_admin_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يرسل رد الأدمن للمستخدم"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    target_id = context.user_data.get("replying_to")
+    if not target_id:
+        return
+    try:
+        await update.bot.send_message(chat_id=int(target_id), text=update.message.text)
+        await update.message.reply_text("✅ تم إرسال ردك")
+        context.user_data.pop("replying_to", None)
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {e}")
 
 async def handle_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -77,10 +103,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=welcome_keyboard()
     )
 
+async def reply_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """أمر للأدمن للرد على مستخدم معين: /reply USER_ID الرسالة"""
+    if update.effective_user.id != ADMIN_ID:
+        return
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("الاستخدام: /reply USER_ID الرسالة")
+        return
+    try:
+        target_id = int(context.args[0])
+        msg       = " ".join(context.args[1:])
+        await context.bot.send_message(chat_id=target_id, text=msg)
+        await update.message.reply_text(f"✅ تم الإرسال لـ {target_id}")
+    except Exception as e:
+        await update.message.reply_text(f"❌ خطأ: {e}")
+
 def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(handle_details, pattern="^details$"))
+    app.add_handler(CallbackQueryHandler(handle_details,   pattern="^details$"))
+    app.add_handler(CallbackQueryHandler(handle_reply_btn, pattern="^reply_"))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND & filters.User(ADMIN_ID), handle_admin_reply))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("Trading bot started!")
     app.run_polling()
